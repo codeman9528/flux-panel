@@ -322,6 +322,102 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
         }
     }
 
+    @Override
+    public R batchDeleteForward(List<Long> ids) {
+        return batchExecute(ids, this::deleteForward);
+    }
+
+    @Override
+    public R batchPauseForward(List<Long> ids) {
+        return batchExecute(ids, this::pauseForward);
+    }
+
+    @Override
+    public R batchResumeForward(List<Long> ids) {
+        return batchExecute(ids, this::resumeForward);
+    }
+
+    @Override
+    public R batchMoveForward(List<Long> ids, Integer tunnelId) {
+        if (tunnelId == null) {
+            return R.err("目标隧道不能为空");
+        }
+        return batchExecute(ids, id -> {
+            // 复用单条更新逻辑：仅修改隧道，其余字段保持不变
+            Forward forward = this.getById(id);
+            if (forward == null) {
+                return R.err("转发不存在");
+            }
+            // batchMove 不经过 controller，@Validated 不生效，这里补做关键字段校验，
+            // 避免历史脏数据（name/remoteAddr 为空、inPort 缺失）带入 updateForward 引发深层 NPE
+            if (forward.getName() == null || forward.getName().trim().isEmpty()
+                    || forward.getRemoteAddr() == null || forward.getRemoteAddr().trim().isEmpty()
+                    || forward.getInPort() == null) {
+                return R.err("转发数据不完整，无法迁移");
+            }
+            ForwardUpdateDto dto = new ForwardUpdateDto();
+            dto.setId(forward.getId());
+            dto.setUserId(forward.getUserId());
+            dto.setName(forward.getName());
+            dto.setTunnelId(tunnelId);
+            dto.setRemoteAddr(forward.getRemoteAddr());
+            dto.setStrategy(forward.getStrategy());
+            dto.setInPort(forward.getInPort());
+            dto.setInterfaceName(forward.getInterfaceName());
+            return updateForward(dto);
+        });
+    }
+
+    /**
+     * 批量执行单条操作，逐条收集成功/失败结果。
+     * 单条失败不影响其余条目，最终返回汇总信息。
+     */
+    private R batchExecute(List<Long> ids, java.util.function.Function<Long, R> action) {
+        if (ids == null || ids.isEmpty()) {
+            return R.err("请选择要操作的转发");
+        }
+        UserInfo currentUser = getCurrentUserInfo();
+        int success = 0;
+        List<Map<String, Object>> failures = new ArrayList<>();
+        for (Long id : ids) {
+            R result;
+            try {
+                result = action.apply(id);
+            } catch (Exception e) {
+                log.error("批量操作转发[{}]异常", id, e);
+                result = R.err(e.getMessage() == null ? "未知错误" : e.getMessage());
+            }
+            if (result != null && result.getCode() == 0) {
+                success++;
+            } else {
+                Forward forward = this.getById(id);
+                // 仅当当前用户有权访问该转发时才回填真实名称，否则用 ID 占位，避免泄露他人转发信息
+                boolean canSeeName = forward != null &&
+                        (currentUser.getRoleId() == ADMIN_ROLE_ID
+                                || Objects.equals(currentUser.getUserId(), forward.getUserId()));
+                Map<String, Object> fail = new HashMap<>();
+                fail.put("id", id);
+                fail.put("name", canSeeName ? forward.getName() : ("ID:" + id));
+                fail.put("msg", result != null ? result.getMsg() : "操作失败");
+                failures.add(fail);
+            }
+        }
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("total", ids.size());
+        data.put("success", success);
+        data.put("failed", failures.size());
+        data.put("failures", failures);
+
+        R r = R.ok(data);
+        if (failures.isEmpty()) {
+            r.setMsg("批量操作成功，共处理 " + success + " 条");
+        } else {
+            r.setMsg("成功 " + success + " 条，失败 " + failures.size() + " 条");
+        }
+        return r;
+    }
+
     /**
      * 改变转发状态（暂停/恢复）
      */

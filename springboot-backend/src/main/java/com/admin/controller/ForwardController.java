@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -95,6 +97,64 @@ public class ForwardController extends BaseController {
     @PostMapping("/update-order")
     public R updateForwardOrder(@RequestBody Map<String, Object> params) {
         return forwardService.updateForwardOrder(params);
+    }
+
+    @LogAnnotation
+    @PostMapping("/batch-delete")
+    public R batchDelete(@RequestBody Map<String, Object> params) {
+        return forwardService.batchDeleteForward(parseIds(params.get("ids")));
+    }
+
+    @LogAnnotation
+    @PostMapping("/batch-pause")
+    public R batchPause(@RequestBody Map<String, Object> params) {
+        return forwardService.batchPauseForward(parseIds(params.get("ids")));
+    }
+
+    @LogAnnotation
+    @PostMapping("/batch-resume")
+    public R batchResume(@RequestBody Map<String, Object> params) {
+        return forwardService.batchResumeForward(parseIds(params.get("ids")));
+    }
+
+    @LogAnnotation
+    @PostMapping("/batch-move")
+    public R batchMove(@RequestBody Map<String, Object> params) {
+        return forwardService.batchMoveForward(parseIds(params.get("ids")), parseTunnelId(params.get("tunnelId")));
+    }
+
+    /**
+     * 解析请求中的 ids 数组为 List<Long>，非法元素跳过（避免非数字输入导致 500）
+     */
+    private List<Long> parseIds(Object raw) {
+        List<Long> ids = new ArrayList<>();
+        if (raw instanceof List<?>) {
+            for (Object o : (List<?>) raw) {
+                if (o == null) {
+                    continue;
+                }
+                try {
+                    ids.add(Long.valueOf(o.toString().trim()));
+                } catch (NumberFormatException ignored) {
+                    // 跳过非法 id
+                }
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * 解析 tunnelId，非法或为空时返回 null（由 service 层给出友好错误）
+     */
+    private Integer parseTunnelId(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(raw.toString().trim());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
 }

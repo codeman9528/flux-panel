@@ -42,7 +42,11 @@ import {
   pauseForwardService,
   resumeForwardService,
   diagnoseForward,
-  updateForwardOrder
+  updateForwardOrder,
+  batchDeleteForward,
+  batchPauseForward,
+  batchResumeForward,
+  batchMoveForward
 } from "@/api";
 import { JwtUtil } from "@/utils/jwt";
 
@@ -198,6 +202,13 @@ export default function ForwardPage() {
   const [errors, setErrors] = useState<{[key: string]: string}>({});
   const [selectedTunnel, setSelectedTunnel] = useState<Tunnel | null>(null);
 
+  // 批量操作相关状态
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchMoveModalOpen, setBatchMoveModalOpen] = useState(false);
+  const [selectedTunnelForMove, setSelectedTunnelForMove] = useState<number | null>(null);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -206,6 +217,8 @@ export default function ForwardPage() {
   const handleViewModeChange = () => {
     const newMode = viewMode === 'grouped' ? 'direct' : 'grouped';
     setViewMode(newMode);
+    // 切换模式后可见集合变化，清空已选，避免选中当前模式下不可见的项被批量误操作
+    setSelectedIds(new Set());
     try {
       localStorage.setItem('forward-view-mode', newMode);
       
@@ -507,6 +520,157 @@ export default function ForwardPage() {
     } finally {
       setDeleteLoading(false);
     }
+  };
+
+  // ==================== 批量操作 ====================
+  // 进入/退出选择模式
+  const toggleSelectionMode = () => {
+    setSelectionMode(prev => !prev);
+    setSelectedIds(new Set());
+  };
+
+  // 切换单条选中
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // 全选 / 取消全选（仅限当前界面可见的转发，避免选中其它用户/其它模式下不可见的项）
+  const toggleSelectAll = () => {
+    const visibleIds = getSortedForwards().map(f => f.id).filter((id): id is number => !!id);
+    setSelectedIds(prev => {
+      const allSelected = visibleIds.length > 0 && visibleIds.every(id => prev.has(id));
+      return allSelected ? new Set() : new Set(visibleIds);
+    });
+  };
+
+  // 当前界面可见转发是否已全部选中（用于全选按钮文案）
+  const isAllVisibleSelected = (): boolean => {
+    const visibleIds = getSortedForwards().map(f => f.id).filter((id): id is number => !!id);
+    return visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+  };
+
+  // 统一处理批量返回结果（含成功/失败明细）
+  // 返回值表示“是否有任何条目生效”：用于决定是否关闭弹窗。全部失败时返回 false 并保留选中以便重试。
+  const handleBatchResult = (res: any, fallbackMsg: string): boolean => {
+    if (res && res.code === 0) {
+      const data = res.data || {};
+      const success: number = data.success ?? 0;
+      const failures: Array<{ name: string; msg: string }> = data.failures || [];
+
+      if (failures.length === 0) {
+        // 全部成功
+        toast.success(res.msg || '批量操作成功');
+        setSelectedIds(new Set());
+        loadData();
+        return true;
+      }
+
+      const detail = failures.map(f => `${f.name}(${f.msg})`).join('；');
+      if (success > 0) {
+        // 部分成功：刷新并清空，提示失败明细
+        toast.error(`${res.msg || fallbackMsg}：${detail}`, { duration: 6000 });
+        setSelectedIds(new Set());
+        loadData();
+        return true;
+      }
+
+      // 全部失败：列表未变化，保留选中供用户调整后重试
+      toast.error(`全部失败：${detail}`, { duration: 6000 });
+      return false;
+    }
+    toast.error((res && res.msg) || fallbackMsg);
+    return false;
+  };
+
+  // 批量删除
+  const handleBatchDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) { toast.error('请先选择转发'); return; }
+    if (!window.confirm(`确定删除选中的 ${ids.length} 条转发吗？此操作不可恢复。`)) return;
+    setBatchLoading(true);
+    try {
+      const res = await batchDeleteForward(ids);
+      handleBatchResult(res, '批量删除失败');
+    } catch (error) {
+      console.error('批量删除失败:', error);
+      toast.error('批量删除失败');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  // 批量暂停
+  const handleBatchPause = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) { toast.error('请先选择转发'); return; }
+    setBatchLoading(true);
+    try {
+      const res = await batchPauseForward(ids);
+      handleBatchResult(res, '批量暂停失败');
+    } catch (error) {
+      console.error('批量暂停失败:', error);
+      toast.error('批量暂停失败');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  // 批量恢复
+  const handleBatchResume = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) { toast.error('请先选择转发'); return; }
+    setBatchLoading(true);
+    try {
+      const res = await batchResumeForward(ids);
+      handleBatchResult(res, '批量恢复失败');
+    } catch (error) {
+      console.error('批量恢复失败:', error);
+      toast.error('批量恢复失败');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  // 打开批量移动隧道弹窗
+  const handleBatchMove = () => {
+    if (selectedIds.size === 0) { toast.error('请先选择转发'); return; }
+    setSelectedTunnelForMove(null);
+    setBatchMoveModalOpen(true);
+  };
+
+  // 执行批量移动隧道
+  const executeBatchMove = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) { toast.error('请先选择转发'); return; }
+    if (!selectedTunnelForMove) { toast.error('请选择目标隧道'); return; }
+    setBatchLoading(true);
+    try {
+      const res = await batchMoveForward(ids, selectedTunnelForMove);
+      if (handleBatchResult(res, '批量移动失败')) {
+        setBatchMoveModalOpen(false);
+      }
+    } catch (error) {
+      console.error('批量移动失败:', error);
+      toast.error('批量移动失败');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  // 批量导出（复制选中转发到剪贴板，格式：目标地址|名称|入口端口）
+  const handleBatchExport = async () => {
+    const selected = forwards.filter(f => f.id && selectedIds.has(f.id));
+    if (selected.length === 0) { toast.error('请先选择转发'); return; }
+    const text = selected.map(f => `${f.remoteAddr}|${f.name}|${f.inPort}`).join('\n');
+    await copyToClipboard(text, `${selected.length} 条转发数据`);
   };
 
   // 处理隧道选择变化
@@ -1181,12 +1345,23 @@ export default function ForwardPage() {
       <Card key={forward.id} className="group shadow-sm border border-divider hover:shadow-md transition-shadow duration-200">
         <CardHeader className="pb-2">
           <div className="flex justify-between items-start w-full">
-            <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-foreground truncate text-sm">{forward.name}</h3>
-              <p className="text-xs text-default-500 truncate">{forward.tunnelName}</p>
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              {selectionMode && (
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-primary cursor-pointer flex-shrink-0"
+                  checked={!!forward.id && selectedIds.has(forward.id)}
+                  onChange={() => forward.id && toggleSelect(forward.id)}
+                  aria-label="选择该转发"
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold text-foreground truncate text-sm">{forward.name}</h3>
+                <p className="text-xs text-default-500 truncate">{forward.tunnelName}</p>
+              </div>
             </div>
             <div className="flex items-center gap-1.5 ml-2">
-              {viewMode === 'direct' && (
+              {viewMode === 'direct' && !selectionMode && (
                 <div 
                   className={`cursor-grab active:cursor-grabbing p-2 text-default-400 hover:text-default-600 transition-colors touch-manipulation ${
                     isMobile 
@@ -1206,7 +1381,7 @@ export default function ForwardPage() {
                 size="sm"
                 isSelected={forward.serviceRunning}
                 onValueChange={() => handleServiceToggle(forward)}
-                isDisabled={forward.status !== 1 && forward.status !== 0}
+                isDisabled={selectionMode || (forward.status !== 1 && forward.status !== 0)}
               />
               <Chip 
                 color={statusDisplay.color as any} 
@@ -1407,14 +1582,42 @@ export default function ForwardPage() {
               variant="flat"
               color="primary"
               onPress={handleAdd}
-             
+
             >
               新增
             </Button>
-            
-        
+
+            {/* 批量操作切换 */}
+            <Button
+              size="sm"
+              variant={selectionMode ? 'solid' : 'flat'}
+              color="secondary"
+              onPress={toggleSelectionMode}
+            >
+              {selectionMode ? '退出批量' : '批量'}
+            </Button>
+
+
           </div>
         </div>
+
+        {/* 批量操作栏 */}
+        {selectionMode && (
+          <div className="sticky top-0 z-20 mb-4 flex flex-wrap items-center gap-2 p-3 rounded-lg bg-default-100 dark:bg-default-50/60 border border-divider">
+            <span className="text-sm text-default-600 mr-1">
+              已选 <span className="font-semibold text-foreground">{selectedIds.size}</span> 项
+            </span>
+            <Button size="sm" variant="flat" onPress={toggleSelectAll}>
+              {isAllVisibleSelected() ? '取消全选' : '全选'}
+            </Button>
+            <div className="w-px h-5 bg-divider mx-1" />
+            <Button size="sm" variant="flat" color="success" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchResume}>恢复</Button>
+            <Button size="sm" variant="flat" color="warning" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchPause}>暂停</Button>
+            <Button size="sm" variant="flat" color="primary" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchMove}>移动隧道</Button>
+            <Button size="sm" variant="flat" color="secondary" isDisabled={selectedIds.size === 0} onPress={handleBatchExport}>导出</Button>
+            <Button size="sm" variant="flat" color="danger" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchDelete}>删除</Button>
+          </div>
+        )}
 
 
         {/* 根据显示模式渲染不同内容 */}
@@ -1746,9 +1949,65 @@ export default function ForwardPage() {
           </ModalContent>
         </Modal>
 
+        {/* 批量移动隧道模态框 */}
+        <Modal
+          isOpen={batchMoveModalOpen}
+          onClose={() => {
+            setBatchMoveModalOpen(false);
+            setSelectedTunnelForMove(null);
+          }}
+          size="md"
+          backdrop="blur"
+          placement="center"
+        >
+          <ModalContent>
+            <ModalHeader className="flex flex-col gap-1">
+              <h2 className="text-lg font-bold">批量移动隧道</h2>
+              <p className="text-small text-default-500">
+                将选中的 {selectedIds.size} 条转发迁移到目标隧道
+              </p>
+            </ModalHeader>
+            <ModalBody className="pb-6">
+              <Alert color="warning" variant="flat" className="mb-2">
+                迁移后入口端口保持不变，若目标隧道不允许该端口或权限不足，对应转发会迁移失败并在结果中提示。
+              </Alert>
+              <Select
+                label="目标隧道"
+                placeholder="请选择要迁移到的隧道"
+                selectedKeys={selectedTunnelForMove ? [selectedTunnelForMove.toString()] : []}
+                onSelectionChange={(keys) => {
+                  const selectedKey = Array.from(keys)[0] as string;
+                  setSelectedTunnelForMove(selectedKey ? parseInt(selectedKey) : null);
+                }}
+                variant="bordered"
+                isRequired
+              >
+                {tunnels.map((tunnel) => (
+                  <SelectItem key={tunnel.id.toString()} textValue={tunnel.name}>
+                    {tunnel.name}
+                  </SelectItem>
+                ))}
+              </Select>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={() => setBatchMoveModalOpen(false)}>
+                取消
+              </Button>
+              <Button
+                color="primary"
+                onPress={executeBatchMove}
+                isLoading={batchLoading}
+                isDisabled={!selectedTunnelForMove}
+              >
+                确认移动
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
         {/* 导出数据模态框 */}
-        <Modal 
-          isOpen={exportModalOpen} 
+        <Modal
+          isOpen={exportModalOpen}
           onClose={() => {
             setExportModalOpen(false);
             setSelectedTunnelForExport(null);
