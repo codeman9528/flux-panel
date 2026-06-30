@@ -67,6 +67,8 @@ export const SettingsPage = () => {
   const handleDeletePanelAddress = async (name: string) => {
     (window as any).setPanelAddresses = setPanelAddressesFunc
     deletePanelAddress(name);
+    // 乐观更新：立即从列表移除，不完全依赖 native 回调（修复"点删除没反应"）
+    setPanelAddresses(prev => prev.filter(p => p.name !== name));
     reinitializeBaseURL();
     toast.success('删除成功');
   };
