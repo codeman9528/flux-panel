@@ -64,6 +64,15 @@ export default function DashboardPage() {
   const [forwardList, setForwardList] = useState<Forward[]>([]);
   const [statisticsFlows, setStatisticsFlows] = useState<StatisticsFlow[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
+  // 仪表盘转发配置：每个隧道默认收起，点标题展开/收起
+  const [expandedTunnels, setExpandedTunnels] = useState<Set<string>>(new Set());
+  const toggleTunnel = (name: string) => {
+    setExpandedTunnels(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
   
   const [addressModalOpen, setAddressModalOpen] = useState(false);
   const [addressModalTitle, setAddressModalTitle] = useState('');
@@ -861,13 +870,22 @@ export default function DashboardPage() {
                              <div className="space-y-4">
                  {groupedForwards().map((group) => (
                    <div key={group.tunnelName} className="border border-gray-200 dark:border-default-100 rounded-lg p-3 lg:p-4">
-                     <div className="flex items-center justify-between mb-3">
-                       <h3 className="font-semibold text-foreground">{group.tunnelName}</h3>
+                     <div
+                       className="flex items-center justify-between mb-3 cursor-pointer select-none"
+                       onClick={() => toggleTunnel(group.tunnelName)}
+                     >
+                       <div className="flex items-center gap-2">
+                         <svg className={`w-4 h-4 text-default-400 transition-transform ${expandedTunnels.has(group.tunnelName) ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                         </svg>
+                         <h3 className="font-semibold text-foreground">{group.tunnelName}</h3>
+                       </div>
                        <span className="px-2 py-1 bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 rounded-md text-sm">
                          {group.forwards.length} 个转发
                        </span>
                      </div>
-                     
+
+                     {expandedTunnels.has(group.tunnelName) && (
                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
                        {group.forwards.map((forward) => (
                          <div key={forward.id} className="bg-white dark:bg-default-100/50 border border-gray-200 dark:border-default-200 rounded-lg p-3 hover:shadow-md transition-shadow">
@@ -913,6 +931,7 @@ export default function DashboardPage() {
                         </div>
                       ))}
                     </div>
+                     )}
                   </div>
                 ))}
               </div>
