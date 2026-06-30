@@ -5,6 +5,13 @@ import path from "path";
 export default defineConfig({
   plugins: [
     react(),
+    // iOS(file://)下 type="module" / crossorigin 会被 CORS 拦截致白屏，去掉改用普通 <script>/<link>
+    ...(process.env.IOS_BUILD ? [{
+      name: "ios-strip-module",
+      transformIndexHtml(html: string) {
+        return html.replace(/ type="module"/g, "").replace(/ crossorigin/g, "");
+      },
+    }] : []),
   ],
   // IOS_BUILD=1 时用相对路径，适配 iOS app 内 file:// 加载
   base: process.env.IOS_BUILD ? './' : '/',
@@ -23,7 +30,12 @@ export default defineConfig({
     assetsDir: process.env.IOS_BUILD ? '' : 'assets',
     sourcemap: false,
     minify: false,  
-    rollupOptions: {
+    rollupOptions: process.env.IOS_BUILD ? {
+      // iOS 用 file:// 加载，ES module 脚本(type="module")会被 CORS 拦截导致白屏；
+      // 打包成 iife 单文件，index.html 用普通 <script> 加载，规避该限制
+      treeshake: false,
+      output: { format: 'iife', inlineDynamicImports: true },
+    } : {
       treeshake: false,
     }
   }
