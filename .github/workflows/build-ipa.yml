@@ -16,6 +16,22 @@ jobs:
       - name: 显示 Xcode 版本
         run: xcodebuild -version
 
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 构建前端并注入 app（WebView 加载本地 index.html，必须用相对路径 base=./ 适配 file://）
+        run: |
+          cd vite-frontend
+          npm install --legacy-peer-deps
+          npx vite build --base=./
+          cd ..
+          # Xcode 工程用 FileSystemSynchronizedRootGroup，会自动打包 ios-app/flux/ 下所有文件
+          cp -R vite-frontend/dist/. ios-app/flux/
+          echo "=== 注入后 ios-app/flux 内容 ==="
+          ls -R ios-app/flux
+
       - name: 构建未签名 .app
         run: |
           xcodebuild \
@@ -32,6 +48,8 @@ jobs:
       - name: 打包成 IPA
         run: |
           cd build_out
+          echo "=== flux.app 内容（确认 index.html 与 assets 已打包进去）==="
+          ls -R flux.app | head -40
           mkdir -p Payload
           cp -R flux.app Payload/
           zip -qr flux-unsigned.ipa Payload
