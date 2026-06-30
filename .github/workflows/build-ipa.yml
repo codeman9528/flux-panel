@@ -25,7 +25,7 @@ jobs:
         run: |
           cd vite-frontend
           npm install --legacy-peer-deps
-          IOS_BUILD=1 npx vite build
+          IOS_BUILD=1 VITE_IOS_BUILD=1 npx vite build
           cd ..
           # Xcode 工程用 FileSystemSynchronizedRootGroup，会自动打包 ios-app/flux/ 下所有文件
           cp -R vite-frontend/dist/. ios-app/flux/
