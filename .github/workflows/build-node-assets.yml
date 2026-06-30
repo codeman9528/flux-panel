@@ -34,8 +34,8 @@ jobs:
           # 重建 1.4.3 release（先删旧的，避免资产冲突）
           gh release delete 1.4.3 --yes --cleanup-tag 2>/dev/null || true
           gh release create 1.4.3 \
-            --title "节点安装资产 1.4.3" \
-            --notes "节点端 gost 二进制 + 安装脚本（供面板添加节点时下载）" \
+            --title "Release 1.4.3" \
+            --notes "gost binaries (amd64/arm64) + install scripts for node setup" \
             gost-amd64 \
             gost-arm64 \
             install.sh \
