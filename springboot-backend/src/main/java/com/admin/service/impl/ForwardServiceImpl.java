@@ -338,6 +338,11 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     }
 
     @Override
+    public R batchForceDeleteForward(List<Long> ids) {
+        return batchExecute(ids, this::forceDeleteForward);
+    }
+
+    @Override
     public R batchMoveForward(List<Long> ids, Integer tunnelId) {
         if (tunnelId == null) {
             return R.err("目标隧道不能为空");

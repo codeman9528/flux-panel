@@ -123,6 +123,12 @@ public class ForwardController extends BaseController {
         return forwardService.batchMoveForward(parseIds(params.get("ids")), parseTunnelId(params.get("tunnelId")));
     }
 
+    @LogAnnotation
+    @PostMapping("/batch-force-delete")
+    public R batchForceDelete(@RequestBody Map<String, Object> params) {
+        return forwardService.batchForceDeleteForward(parseIds(params.get("ids")));
+    }
+
     /**
      * 解析请求中的 ids 数组为 List<Long>，非法元素跳过（避免非数字输入导致 500）
      */

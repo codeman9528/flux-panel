@@ -71,6 +71,7 @@ export const batchDeleteForward = (ids: number[]) => Network.post("/forward/batc
 export const batchPauseForward = (ids: number[]) => Network.post("/forward/batch-pause", { ids });
 export const batchResumeForward = (ids: number[]) => Network.post("/forward/batch-resume", { ids });
 export const batchMoveForward = (ids: number[], tunnelId: number) => Network.post("/forward/batch-move", { ids, tunnelId });
+export const batchForceDeleteForward = (ids: number[]) => Network.post("/forward/batch-force-delete", { ids });
 
 // 限速规则CRUD操作 - 全部使用POST请求
 export const createSpeedLimit = (data: any) => Network.post("/speed-limit/create", data);

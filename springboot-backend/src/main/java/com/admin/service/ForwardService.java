@@ -110,6 +110,13 @@ public interface ForwardService extends IService<Forward> {
      */
     R batchMoveForward(List<Long> ids, Integer tunnelId);
 
+    /**
+     * 批量强制删除端口转发（跳过 GOST 节点验证，直接删库）
+     * @param ids 转发ID列表
+     * @return 结果（含成功/失败明细）
+     */
+    R batchForceDeleteForward(List<Long> ids);
+
 
     void updateForwardA(Forward forward);
 }

@@ -46,7 +46,8 @@ import {
   batchDeleteForward,
   batchPauseForward,
   batchResumeForward,
-  batchMoveForward
+  batchMoveForward,
+  batchForceDeleteForward
 } from "@/api";
 import { JwtUtil } from "@/utils/jwt";
 
@@ -557,6 +558,33 @@ export default function ForwardPage() {
     return visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
   };
 
+  // 指定一组转发是否已全部选中（分组模式下按隧道全选用）
+  const isGroupAllSelected = (groupForwards: Forward[]): boolean => {
+    const ids = groupForwards.map(f => f.id).filter((id): id is number => !!id);
+    return ids.length > 0 && ids.every(id => selectedIds.has(id));
+  };
+
+  // 切换某一组（某隧道）转发的全选/取消，仅影响该组，不波及其它隧道
+  const toggleSelectGroup = (groupForwards: Forward[]) => {
+    const ids = groupForwards.map(f => f.id).filter((id): id is number => !!id);
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const allSelected = ids.length > 0 && ids.every(id => next.has(id));
+      if (allSelected) {
+        ids.forEach(id => next.delete(id));
+      } else {
+        ids.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  // 把失败明细截断成可读文案（避免几十上百条撑爆 toast / confirm 弹窗）
+  const formatFailures = (failures: Array<{ name: string; msg: string }>, max = 8): string => {
+    const shown = failures.slice(0, max).map(f => `${f.name}(${f.msg})`).join('；');
+    return failures.length > max ? `${shown} …等共 ${failures.length} 条` : shown;
+  };
+
   // 统一处理批量返回结果（含成功/失败明细）
   // 返回值表示“是否有任何条目生效”：用于决定是否关闭弹窗。全部失败时返回 false 并保留选中以便重试。
   const handleBatchResult = (res: any, fallbackMsg: string): boolean => {
@@ -573,7 +601,7 @@ export default function ForwardPage() {
         return true;
       }
 
-      const detail = failures.map(f => `${f.name}(${f.msg})`).join('；');
+      const detail = formatFailures(failures);
       if (success > 0) {
         // 部分成功：刷新并清空，提示失败明细
         toast.error(`${res.msg || fallbackMsg}：${detail}`, { duration: 6000 });
@@ -590,19 +618,57 @@ export default function ForwardPage() {
     return false;
   };
 
-  // 批量删除
+  // 批量删除（常规删除失败时，询问是否对失败项强制删除——与单条删除体验一致）
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) { toast.error('请先选择转发'); return; }
-    if (!window.confirm(`确定删除选中的 ${ids.length} 条转发吗？此操作不可恢复。`)) return;
+    if (!window.confirm(`确定删除选中的 ${ids.length} 条转发吗？(可能跨多个隧道) 此操作不可恢复。`)) return;
     setBatchLoading(true);
     try {
       const res = await batchDeleteForward(ids);
-      handleBatchResult(res, '批量删除失败');
+      if (!(res && res.code === 0)) {
+        toast.error((res && res.msg) || '批量删除失败');
+        return;
+      }
+      const data = res.data || {};
+      const success: number = data.success ?? 0;
+      const failures: Array<{ id: number; name: string; msg: string }> = data.failures || [];
+
+      if (failures.length === 0) {
+        toast.success(res.msg || `成功删除 ${success} 条`);
+        return;
+      }
+
+      // 有常规删除失败的（多为节点上已无对应服务），询问是否强制删除这些记录
+      const failIds = failures.map(f => f.id).filter((id): id is number => !!id);
+      const confirmed = window.confirm(
+        `${success} 条已删除，${failures.length} 条常规删除失败：\n${formatFailures(failures)}\n\n` +
+        `这些转发可能在节点上已无对应服务。是否对这 ${failIds.length} 条执行【强制删除】？\n` +
+        `⚠️ 强制删除只删面板记录、不验证节点。`
+      );
+      if (confirmed && failIds.length > 0) {
+        const forceRes = await batchForceDeleteForward(failIds);
+        if (forceRes && forceRes.code === 0) {
+          const fd = forceRes.data || {};
+          const fFail: Array<{ name: string; msg: string }> = fd.failures || [];
+          if (fFail.length === 0) {
+            toast.success(`强制删除完成，共 ${fd.success ?? failIds.length} 条`);
+          } else {
+            toast.error(`强制删除：成功 ${fd.success ?? 0} 条，仍失败 ${fFail.length} 条：${formatFailures(fFail)}`, { duration: 6000 });
+          }
+        } else {
+          toast.error((forceRes && forceRes.msg) || '强制删除失败');
+        }
+      } else if (success > 0) {
+        toast.success(`已删除 ${success} 条`);
+      }
     } catch (error) {
       console.error('批量删除失败:', error);
       toast.error('批量删除失败');
     } finally {
+      // 只要发起过删除，列表都可能变化：统一刷新 + 清空选择，杜绝僵尸卡片
+      setSelectedIds(new Set());
+      loadData();
       setBatchLoading(false);
     }
   };
@@ -1607,9 +1673,13 @@ export default function ForwardPage() {
             <span className="text-sm text-default-600 mr-1">
               已选 <span className="font-semibold text-foreground">{selectedIds.size}</span> 项
             </span>
-            <Button size="sm" variant="flat" onPress={toggleSelectAll}>
-              {isAllVisibleSelected() ? '取消全选' : '全选'}
-            </Button>
+            {viewMode === 'direct' ? (
+              <Button size="sm" variant="flat" onPress={toggleSelectAll}>
+                {isAllVisibleSelected() ? '取消全选' : '全选'}
+              </Button>
+            ) : (
+              <span className="text-xs text-default-400">展开各隧道后单独勾选 / 全选</span>
+            )}
             <div className="w-px h-5 bg-divider mx-1" />
             <Button size="sm" variant="flat" color="success" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchResume}>恢复</Button>
             <Button size="sm" variant="flat" color="warning" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchPause}>暂停</Button>
@@ -1676,6 +1746,19 @@ export default function ForwardPage() {
                           }
                           className="shadow-none border border-divider"
                         >
+                          {selectionMode && (
+                            <div className="flex items-center gap-2 px-4 pt-3">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                color="primary"
+                                onPress={() => toggleSelectGroup(tunnelGroup.forwards)}
+                              >
+                                {isGroupAllSelected(tunnelGroup.forwards) ? '取消全选本隧道' : '全选本隧道'}
+                              </Button>
+                              <span className="text-xs text-default-400">本隧道共 {tunnelGroup.forwards.length} 条</span>
+                            </div>
+                          )}
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 p-4">
                             {tunnelGroup.forwards.map((forward) => renderForwardCard(forward, undefined))}
                           </div>
