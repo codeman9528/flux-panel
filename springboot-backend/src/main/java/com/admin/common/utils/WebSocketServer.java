@@ -223,6 +223,22 @@ public class WebSocketServer extends TextWebSocketHandler {
             } else {
                 // 客户端节点连接
                 Long nodeId = Long.valueOf(id);
+
+                // 读取本次连接上报的安装令牌（新机令牌更大；旧版 gost 不上报为 null，兼容旧节点）
+                Long incomingInstallId = null;
+                Object iidAttr = session.getAttributes().get("installId");
+                if (iidAttr != null && !iidAttr.toString().isEmpty()) {
+                    try { incomingInstallId = Long.valueOf(iidAttr.toString()); } catch (Exception ignore) {}
+                }
+                // 接管判定：上报令牌比库中归属令牌更旧 → 被取代的旧机重连 → 拒绝，不接管
+                Node ownerCheck = nodeService.getById(nodeId);
+                if (incomingInstallId != null && ownerCheck != null && ownerCheck.getInstallId() != null
+                        && incomingInstallId < ownerCheck.getInstallId()) {
+                    log.info("节点 {} 旧机重连(令牌 {} < 当前 {})，拒绝接管", nodeId, incomingInstallId, ownerCheck.getInstallId());
+                    try { session.close(); } catch (Exception ignore) {}
+                    return;
+                }
+
                 String version = (String) session.getAttributes().get("nodeVersion");
                 String http = (String) session.getAttributes().get("http");
                 String tls = (String) session.getAttributes().get("tls");
@@ -254,6 +270,10 @@ public class WebSocketServer extends TextWebSocketHandler {
                 // 更新节点状态为在线
                 Node node = nodeService.getById(nodeId);
                 if (node != null) {
+                    // 记录当前归属机器的安装令牌（新机接管后写入，旧机据此被拒）
+                    if (incomingInstallId != null) {
+                        node.setInstallId(incomingInstallId);
+                    }
                     // 更新状态和版本信息
                     node.setStatus(1);
                     if (version != null) {

@@ -214,7 +214,8 @@ func (w *WebSocketReporter) connect() error {
 
 	// 使用最新的配置重新构建 URL
 	currentURL := "ws://" + w.addr + "/system-info?type=1&secret=" + w.secret + "&version=" + w.version +
-		"&http=" + strconv.Itoa(cfg.Http) + "&tls=" + strconv.Itoa(cfg.Tls) + "&socks=" + strconv.Itoa(cfg.Socks)
+		"&http=" + strconv.Itoa(cfg.Http) + "&tls=" + strconv.Itoa(cfg.Tls) + "&socks=" + strconv.Itoa(cfg.Socks) +
+		"&installId=" + strconv.FormatInt(readInstallId(), 10)
 
 	u, err := url.Parse(currentURL)
 	if err != nil {
@@ -1039,11 +1040,24 @@ func getMemoryInfo() MemoryInfo {
 	return memInfo
 }
 
+// readInstallId 从 install_id 文件读取安装令牌（换机时新机令牌更大→面板判定接管；文件不存在返回 0，兼容旧节点）
+func readInstallId() int64 {
+	b, err := os.ReadFile("install_id")
+	if err != nil {
+		return 0
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
 // StartWebSocketReporterWithConfig 使用配置字段启动WebSocket报告器
 func StartWebSocketReporterWithConfig(addr string, secret string, http int, tls int, socks int, version string) *WebSocketReporter {
 
 	// 构建初始 WebSocket URL
-	fullURL := "ws://" + addr + "/system-info?type=1&secret=" + secret + "&version=" + version + "&http=" + strconv.Itoa(http) + "&tls=" + strconv.Itoa(tls) + "&socks=" + strconv.Itoa(socks)
+	fullURL := "ws://" + addr + "/system-info?type=1&secret=" + secret + "&version=" + version + "&http=" + strconv.Itoa(http) + "&tls=" + strconv.Itoa(tls) + "&socks=" + strconv.Itoa(socks) + "&installId=" + strconv.FormatInt(readInstallId(), 10)
 
 	fmt.Printf("🔗 WebSocket连接URL: %s\n", fullURL)
 

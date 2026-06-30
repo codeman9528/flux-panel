@@ -64,6 +64,7 @@ CREATE TABLE `node` (
   `http` int(10) NOT NULL DEFAULT '0',
   `tls` int(10) NOT NULL DEFAULT '0',
   `socks` int(10) NOT NULL DEFAULT '0',
+  `install_id` bigint(20) DEFAULT NULL,
   `created_time` bigint(20) NOT NULL,
   `updated_time` bigint(20) DEFAULT NULL,
   `status` int(10) NOT NULL

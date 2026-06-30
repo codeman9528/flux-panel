@@ -197,6 +197,12 @@ install_gost() {
 }
 EOF
 
+  # 安装令牌：每次安装刷新（时间戳）。换机时新机令牌更大，面板凭此判定接管、拒绝旧机重连
+  INSTALL_ID=$(date +%s)
+  echo "$INSTALL_ID" > "$INSTALL_DIR/install_id"
+  chmod 600 "$INSTALL_DIR/install_id"
+  echo "🔑 安装令牌: $INSTALL_ID"
+
   # 写入 gost.json
   GOST_CONFIG="$INSTALL_DIR/gost.json"
   if [[ -f "$GOST_CONFIG" ]]; then

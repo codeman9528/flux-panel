@@ -38,4 +38,9 @@ public class Node extends BaseEntity {
 
     private Integer socks;
 
+    /**
+     * 当前归属机器的安装令牌（换机时新机令牌更大→接管，旧机重连令牌更小→被拒，实现稳定接管）
+     */
+    private Long installId;
+
 }
