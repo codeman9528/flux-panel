@@ -364,7 +364,7 @@ public class NodeServiceImpl extends ServiceImpl<NodeMapper, Node> implements No
         
         // 第一部分：下载安装脚本  
         command.append("curl -L https://github.com/codeman9528/flux-panel/releases/download/1.4.3/install.sh")
-               .append(" -o ./install.sh && chmod +x ./install.sh && ");
+               .append(" -o ./install.sh; chmod +x ./install.sh; ");
         
         // 处理服务器地址，如果是IPv6需要添加方括号
         String processedServerAddr = processServerAddress(viteConfig.getValue());
