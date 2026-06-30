@@ -9,7 +9,8 @@ export default defineConfig({
     ...(process.env.IOS_BUILD ? [{
       name: "ios-strip-module",
       transformIndexHtml(html: string) {
-        return html.replace(/ type="module"/g, "").replace(/ crossorigin/g, "");
+        // module→defer：去掉 module（file:// 下被 CORS 拦），但保留延迟执行，否则脚本在 #root 渲染前跑导致 createRoot 找不到容器(React #299)
+        return html.replace(/ type="module"/g, " defer").replace(/ crossorigin/g, "");
       },
     }] : []),
   ],
