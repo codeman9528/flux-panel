@@ -206,6 +206,8 @@ export default function ForwardPage() {
   // 批量操作相关状态
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // grouped 模式记住展开的隧道分组，添加规则/刷新列表后保持展开（受控 Accordion）
+  const [expandedTunnelKeys, setExpandedTunnelKeys] = useState<Set<string>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchMoveModalOpen, setBatchMoveModalOpen] = useState(false);
   const [selectedTunnelForMove, setSelectedTunnelForMove] = useState<number | null>(null);
@@ -1720,7 +1722,22 @@ export default function ForwardPage() {
                   </CardHeader>
                   
                   <CardBody className="pt-0">
-                    <Accordion variant="splitted" className="px-0">
+                    <Accordion
+                      variant="splitted"
+                      className="px-0"
+                      selectionMode="multiple"
+                      selectedKeys={expandedTunnelKeys as any}
+                      onSelectionChange={(keys) => {
+                        const groupKeys = userGroup.tunnelGroups.map(t => String(t.tunnelId));
+                        const sel = new Set(Array.from(keys as Set<string>).map(String));
+                        setExpandedTunnelKeys(prev => {
+                          const next = new Set(prev);
+                          groupKeys.forEach(k => next.delete(k));
+                          sel.forEach(k => next.add(k));
+                          return next;
+                        });
+                      }}
+                    >
                       {userGroup.tunnelGroups.map((tunnelGroup) => (
                         <AccordionItem
                           key={tunnelGroup.tunnelId}
