@@ -49,8 +49,10 @@ function handleTokenExpired() {
   window.localStorage.removeItem('role_id');
   window.localStorage.removeItem('name');
   
-  // 跳转到登录页面
-  if (window.location.pathname !== '/') {
+  // 跳转到登录页面（iOS 用 HashRouter + file://，window.location.href='/' 会跳到文件系统根导致白屏，改用 hash）
+  if ((import.meta as any).env?.VITE_IOS_BUILD) {
+    window.location.hash = '#/';
+  } else if (window.location.pathname !== '/') {
     window.location.href = '/';
   }
 }
