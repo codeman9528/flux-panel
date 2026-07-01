@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import UIKit
 
 
 struct WebView: UIViewRepresentable {
@@ -34,6 +35,7 @@ struct WebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         context.coordinator.webView = webView
+        webView.uiDelegate = context.coordinator
 
         // 去掉滚动条和弹性
         webView.scrollView.showsHorizontalScrollIndicator = false
@@ -54,9 +56,32 @@ struct WebView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
-    class Coordinator: NSObject, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKScriptMessageHandler, WKUIDelegate {
         weak var webView: WKWebView?
         private let storageKey = "panel_addresses"
+
+        // WKWebView 默认不弹网页的 confirm/alert，实现 WKUIDelegate 用原生弹窗支持（修复 app 内删除转发点了没反应）
+        private func topViewController() -> UIViewController? {
+            let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+            var top = scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+            while let presented = top?.presentedViewController { top = presented }
+            return top
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            guard let vc = topViewController() else { completionHandler(false); return }
+            let alert = UIAlertController(title: "提示", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(false) })
+            alert.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler(true) })
+            vc.present(alert, animated: true)
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+            guard let vc = topViewController() else { completionHandler(); return }
+            let alert = UIAlertController(title: "提示", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler() })
+            vc.present(alert, animated: true)
+        }
 
         
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
