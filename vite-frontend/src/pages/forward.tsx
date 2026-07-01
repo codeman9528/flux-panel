@@ -208,6 +208,10 @@ export default function ForwardPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   // grouped 模式记住展开的隧道分组，添加规则/刷新列表后保持展开（受控 Accordion）
   const [expandedTunnelKeys, setExpandedTunnelKeys] = useState<Set<string>>(new Set());
+  // 搜索规则
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchForm, setSearchForm] = useState({ name: '', tunnelId: '', inPort: '', remoteAddr: '' });
+  const [activeSearch, setActiveSearch] = useState<{ name: string; tunnelId: string; inPort: string; remoteAddr: string } | null>(null);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchMoveModalOpen, setBatchMoveModalOpen] = useState(false);
   const [selectedTunnelForMove, setSelectedTunnelForMove] = useState<number | null>(null);
@@ -1323,6 +1327,17 @@ export default function ForwardPage() {
   );
 
   // 根据排序顺序获取转发列表
+  // 转发是否匹配搜索条件（名称/目标地址模糊，隧道/监听端口精确）
+  const matchSearch = (f: Forward): boolean => {
+    if (!activeSearch) return true;
+    const s = activeSearch;
+    if (s.name && !(f.name || '').toLowerCase().includes(s.name.toLowerCase().trim())) return false;
+    if (s.tunnelId && String(f.tunnelId) !== s.tunnelId) return false;
+    if (s.inPort && String(f.inPort ?? '') !== s.inPort.trim()) return false;
+    if (s.remoteAddr && !(f.remoteAddr || '').toLowerCase().includes(s.remoteAddr.toLowerCase().trim())) return false;
+    return true;
+  };
+
   const getSortedForwards = (): Forward[] => {
     // 确保 forwards 数组存在且有效
     if (!forwards || forwards.length === 0) {
@@ -1337,7 +1352,12 @@ export default function ForwardPage() {
         filteredForwards = forwards.filter(forward => forward.userId === currentUserId);
       }
     }
-    
+
+    // 应用搜索条件
+    if (activeSearch) {
+      filteredForwards = filteredForwards.filter(matchSearch);
+    }
+
     // 确保过滤后的转发列表有效
     if (!filteredForwards || filteredForwards.length === 0) {
       return [];
@@ -1653,6 +1673,16 @@ export default function ForwardPage() {
 
             >
               新增
+            </Button>
+
+            {/* 搜索规则 */}
+            <Button
+              size="sm"
+              variant={activeSearch ? 'solid' : 'flat'}
+              color="default"
+              onPress={() => { setSearchForm(activeSearch || { name: '', tunnelId: '', inPort: '', remoteAddr: '' }); setSearchOpen(true); }}
+            >
+              {activeSearch ? '搜索中' : '搜索'}
             </Button>
 
             {/* 批量操作切换 */}
@@ -2101,6 +2131,31 @@ export default function ForwardPage() {
               >
                 确认移动
               </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        {/* 搜索规则模态框 */}
+        <Modal isOpen={searchOpen} onClose={() => setSearchOpen(false)} size="md" backdrop="blur" placement="center">
+          <ModalContent>
+            <ModalHeader className="flex flex-col gap-1"><h2 className="text-lg font-bold">搜索规则</h2></ModalHeader>
+            <ModalBody className="pb-6">
+              <div className="space-y-4">
+                <Input label="规则名称 (模糊)" value={searchForm.name} onValueChange={(v) => setSearchForm(prev => ({ ...prev, name: v }))} variant="bordered" />
+                <Select label="入口隧道" placeholder="全部" selectedKeys={searchForm.tunnelId ? [searchForm.tunnelId] : []} onSelectionChange={(keys) => setSearchForm(prev => ({ ...prev, tunnelId: (Array.from(keys)[0] as string) || '' }))} variant="bordered">
+                  {tunnels.map((t) => (<SelectItem key={t.id.toString()} textValue={t.name}>{t.name}</SelectItem>))}
+                </Select>
+                <Input label="监听端口 (精确)" value={searchForm.inPort} onValueChange={(v) => setSearchForm(prev => ({ ...prev, inPort: v }))} variant="bordered" />
+                <Input label="目标地址或端口 (模糊)" value={searchForm.remoteAddr} onValueChange={(v) => setSearchForm(prev => ({ ...prev, remoteAddr: v }))} variant="bordered" />
+              </div>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={() => { setSearchForm({ name: '', tunnelId: '', inPort: '', remoteAddr: '' }); setActiveSearch(null); setSearchOpen(false); }}>重置</Button>
+              <Button color="primary" onPress={() => {
+                const has = searchForm.name || searchForm.tunnelId || searchForm.inPort || searchForm.remoteAddr;
+                setActiveSearch(has ? { ...searchForm } : null);
+                setSearchOpen(false);
+              }}>搜索</Button>
             </ModalFooter>
           </ModalContent>
         </Modal>
