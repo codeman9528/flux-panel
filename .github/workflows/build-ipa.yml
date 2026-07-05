@@ -1,0 +1,63 @@
+name: 手动构建未签名 IPA
+
+# 在 Actions 页点 "Run workflow" 触发。
+# 产出未签名 ipa，下载后用 Sideloadly / AltStore 自签安装（无需 Apple 开发者账号）。
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    name: 构建未签名 IPA
+    runs-on: macos-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 显示 Xcode 版本
+        run: xcodebuild -version
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 构建前端并注入 app（WebView 加载本地 index.html，必须用相对路径 base=./ 适配 file://）
+        run: |
+          cd vite-frontend
+          npm install --legacy-peer-deps
+          IOS_BUILD=1 VITE_IOS_BUILD=1 npx vite build
+          cd ..
+          # Xcode 工程用 FileSystemSynchronizedRootGroup，会自动打包 ios-app/flux/ 下所有文件
+          cp -R vite-frontend/dist/. ios-app/flux/
+          echo "=== 注入后 ios-app/flux 内容 ==="
+          ls -R ios-app/flux
+
+      - name: 构建未签名 .app
+        run: |
+          xcodebuild \
+            -project ios-app/flux.xcodeproj \
+            -target flux \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/build_out" \
+            build
+
+      - name: 打包成 IPA
+        run: |
+          cd build_out
+          echo "=== flux.app 内容（确认 index.html 与 assets 已打包进去）==="
+          ls -R flux.app | head -40
+          mkdir -p Payload
+          cp -R flux.app Payload/
+          zip -qr flux-unsigned.ipa Payload
+          ls -lh flux-unsigned.ipa
+
+      - name: 上传 IPA 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: flux-unsigned-ipa
+          path: build_out/flux-unsigned.ipa
+          if-no-files-found: error
