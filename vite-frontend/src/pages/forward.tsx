@@ -1565,7 +1565,7 @@ export default function ForwardPage() {
 
       <div className="px-3 lg:px-6 py-8 lg:pr-24">
         {/* 页面头部：原项目顶部菜单（网页 + 手机都显示） */}
-        <div className="sticky top-0 z-30 bg-gray-100 dark:bg-black pt-2 pb-4 flex flex-nowrap items-center gap-1.5 overflow-x-auto lg:justify-end lg:gap-3">
+        <div className="sticky top-0 z-30 bg-gray-100 dark:bg-black pt-2 pb-4 flex flex-nowrap items-center gap-1 [&>*]:flex-1 [&>*]:!min-w-0 lg:gap-3 lg:justify-end lg:[&>*]:flex-none">
             {/* 显示模式切换按钮 */}
             <Button
               size="sm"
@@ -1630,7 +1630,7 @@ export default function ForwardPage() {
               color="danger"
               onPress={toggleSelectionMode}
             >
-              {selectionMode ? '退出批量' : '批量'}
+              {selectionMode ? '退出' : '批量'}
             </Button>
         </div>
 
