@@ -10,6 +10,7 @@ import { Spinner } from "@heroui/spinner";
 import { Switch } from "@heroui/switch";
 import { Alert } from "@heroui/alert";
 import { Accordion, AccordionItem } from "@heroui/accordion";
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/dropdown";
 import toast from 'react-hot-toast';
 import {
   DndContext,
@@ -1566,44 +1567,7 @@ export default function ForwardPage() {
       <div className="px-3 lg:px-6 py-8 lg:pr-24">
         {/* 页面头部：原项目顶部菜单（网页 + 手机都显示） */}
         <div className="sticky top-0 z-30 bg-gray-100 dark:bg-black pt-2 pb-4 flex flex-nowrap items-center gap-1 [&>*]:flex-1 [&>*]:!min-w-0 lg:gap-3 lg:justify-end lg:[&>*]:flex-none">
-            {/* 显示模式切换按钮 */}
-            <Button
-              size="sm"
-              variant="bordered"
-              color="default"
-              onPress={toggleAllTunnels}
-              isIconOnly
-              className="text-sm"
-              title={expandedTunnelKeys.size > 0 ? '全部收起' : '全部展开'}
-            >
-              {expandedTunnelKeys.size > 0 ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 11l-5-5-5 5M17 18l-5-5-5 5" /></svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 6l5 5 5-5M7 13l5 5 5-5" /></svg>
-              )}
-            </Button>
-
-            {/* 导入按钮 */}
-            <Button
-              size="sm"
-              variant="bordered"
-              color="warning"
-              onPress={handleImport}
-            >
-              导入
-            </Button>
-
-            {/* 导出按钮 */}
-            <Button
-              size="sm"
-              variant="bordered"
-              color="success"
-              onPress={handleExport}
-              isLoading={exportLoading}
-            >
-              导出
-            </Button>
-
+            {/* 新增 */}
             <Button
               size="sm"
               variant="bordered"
@@ -1632,6 +1596,20 @@ export default function ForwardPage() {
             >
               {selectionMode ? '退出' : '批量'}
             </Button>
+
+            {/* 更多：导入 / 导出 / 全部收起展开 */}
+            <Dropdown>
+              <DropdownTrigger>
+                <Button size="sm" variant="bordered" color="default">更多</Button>
+              </DropdownTrigger>
+              <DropdownMenu aria-label="更多操作">
+                <DropdownItem key="import" onPress={handleImport}>导入</DropdownItem>
+                <DropdownItem key="export" onPress={handleExport}>导出</DropdownItem>
+                <DropdownItem key="toggleAll" onPress={toggleAllTunnels}>
+                  {expandedTunnelKeys.size > 0 ? '全部收起' : '全部展开'}
+                </DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
         </div>
 
         {/* 右侧浮动竖排菜单：中间偏下、窄条 */}
