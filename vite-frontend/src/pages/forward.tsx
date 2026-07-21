@@ -1567,6 +1567,23 @@ export default function ForwardPage() {
       <div className="px-3 lg:px-6 py-8 lg:pr-24">
         {/* 页面头部：原项目顶部菜单（网页 + 手机都显示） */}
         <div className="sticky top-0 z-30 bg-gray-100 dark:bg-black pt-2 pb-4 flex flex-nowrap items-center gap-1 [&>*]:flex-1 [&>*]:!min-w-0 lg:gap-3 lg:justify-end lg:[&>*]:flex-none">
+            {/* 全部收起 / 全部展开 */}
+            <Button
+              size="sm"
+              variant="bordered"
+              color="default"
+              onPress={toggleAllTunnels}
+              isIconOnly
+              className="text-sm"
+              title={expandedTunnelKeys.size > 0 ? '全部收起' : '全部展开'}
+            >
+              {expandedTunnelKeys.size > 0 ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 11l-5-5-5 5M17 18l-5-5-5 5" /></svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 6l5 5 5-5M7 13l5 5 5-5" /></svg>
+              )}
+            </Button>
+
             {/* 新增 */}
             <Button
               size="sm"
@@ -1605,9 +1622,6 @@ export default function ForwardPage() {
               <DropdownMenu aria-label="更多操作">
                 <DropdownItem key="import" onPress={handleImport}>导入</DropdownItem>
                 <DropdownItem key="export" onPress={handleExport}>导出</DropdownItem>
-                <DropdownItem key="toggleAll" onPress={toggleAllTunnels}>
-                  {expandedTunnelKeys.size > 0 ? '全部收起' : '全部展开'}
-                </DropdownItem>
               </DropdownMenu>
             </Dropdown>
         </div>
@@ -1661,24 +1675,28 @@ export default function ForwardPage() {
 
         {/* 批量操作栏：勾选任意规则即出现（无需先点批量） */}
         {(selectionMode || selectedIds.size > 0) && (
-          <div className="sticky top-14 z-20 mb-4 flex flex-wrap items-center gap-2 p-3 rounded-lg bg-default-100 dark:bg-default-50/60 border border-divider">
-            <span className="text-sm text-default-600 mr-1">
-              已选 <span className="font-semibold text-foreground">{selectedIds.size}</span> 项
-            </span>
-            {viewMode === 'direct' ? (
-              <Button size="sm" variant="flat" onPress={toggleSelectAll}>
-                {isAllVisibleSelected() ? '取消全选' : '全选'}
-              </Button>
-            ) : (
-              <span className="text-xs text-default-400">展开各隧道后单独勾选 / 全选</span>
-            )}
-            <div className="w-px h-5 bg-divider mx-1" />
-            {/* 批量操作全在此，手机隐藏右侧菜单也能用 */}
-            <Button size="sm" variant="flat" color="success" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchResume}>启动</Button>
-            <Button size="sm" variant="flat" color="warning" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchPause}>暂停</Button>
-            <Button size="sm" variant="flat" color="primary" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchMove}>切换</Button>
-            <Button size="sm" variant="flat" color="secondary" isDisabled={selectedIds.size === 0} onPress={handleBatchExport}>导出选中</Button>
-            <Button size="sm" variant="flat" color="danger" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchDelete}>删除</Button>
+          <div className="sticky top-14 z-20 mb-4 p-3 rounded-lg bg-default-100 dark:bg-default-50/60 border border-divider">
+            {/* 第一行：已选 + 全选/提示 */}
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm text-default-600">
+                已选 <span className="font-semibold text-foreground">{selectedIds.size}</span> 项
+              </span>
+              {viewMode === 'direct' ? (
+                <Button size="sm" variant="flat" onPress={toggleSelectAll}>
+                  {isAllVisibleSelected() ? '取消全选' : '全选'}
+                </Button>
+              ) : (
+                <span className="text-xs text-default-400">展开隧道后勾选 / 全选</span>
+              )}
+            </div>
+            {/* 第二行：批量操作按钮，等分一整行（手机隐藏右侧菜单也能用） */}
+            <div className="flex gap-1.5 [&>*]:flex-1 [&>*]:!min-w-0">
+              <Button size="sm" variant="flat" color="success" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchResume}>启动</Button>
+              <Button size="sm" variant="flat" color="warning" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchPause}>暂停</Button>
+              <Button size="sm" variant="flat" color="primary" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchMove}>切换</Button>
+              <Button size="sm" variant="flat" color="secondary" isDisabled={selectedIds.size === 0} onPress={handleBatchExport}>导出</Button>
+              <Button size="sm" variant="flat" color="danger" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchDelete}>删除</Button>
+            </div>
           </div>
         )}
 
