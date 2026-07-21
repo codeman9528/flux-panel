@@ -1695,10 +1695,12 @@ export default function ForwardPage() {
               <span className="text-xs text-default-400">展开各隧道后单独勾选 / 全选</span>
             )}
             <div className="w-px h-5 bg-divider mx-1" />
-            {/* 删除/移动在右侧浮动菜单；批量 启动/暂停/导出 在此 */}
+            {/* 批量操作全在此，手机隐藏右侧菜单也能用 */}
             <Button size="sm" variant="flat" color="success" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchResume}>启动</Button>
             <Button size="sm" variant="flat" color="warning" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchPause}>暂停</Button>
+            <Button size="sm" variant="flat" color="primary" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchMove}>切换</Button>
             <Button size="sm" variant="flat" color="secondary" isDisabled={selectedIds.size === 0} onPress={handleBatchExport}>导出选中</Button>
+            <Button size="sm" variant="flat" color="danger" isDisabled={selectedIds.size === 0} isLoading={batchLoading} onPress={handleBatchDelete}>删除</Button>
           </div>
         )}
 
