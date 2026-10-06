@@ -1,15 +1,19 @@
 package com.admin.common.utils;
 
 import com.admin.entity.User;
+import com.admin.mapper.UserMapper;
 import com.alibaba.fastjson2.JSON;
 import lombok.SneakyThrows;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
+import javax.annotation.Resource;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
@@ -25,8 +29,16 @@ public class JwtUtil {
     private String secretKey;
     
     private static String SECRET_KEY;
-    
-    // token有效期，7天
+
+    @Resource
+    @Lazy
+    private UserMapper userMapper;
+
+    private static UserMapper USER_MAPPER;
+
+    private static final int USER_STATUS_ACTIVE = 1;
+
+    // token有效期，90天
     private static final long EXPIRE_TIME = 90L * 24 * 60 * 60 * 1000;
     // 算法
     private static final String ALGORITHM = "HmacSHA256";
@@ -34,6 +46,7 @@ public class JwtUtil {
     @PostConstruct
     public void init() {
         SECRET_KEY = this.secretKey;
+        USER_MAPPER = this.userMapper;
     }
 
     /**
@@ -64,6 +77,7 @@ public class JwtUtil {
             payload.put("user", user.getUser());
             payload.put("name", user.getUser());
             payload.put("role_id", user.getRoleId());
+            payload.put("pv", passwordFingerprint(user.getPwd()));
 
             String payloadJson = JSON.toJSONString(payload);
             String encodedPayload = Base64.getUrlEncoder().withoutPadding()
@@ -102,7 +116,8 @@ public class JwtUtil {
 
             // 验证签名
             String expectedSignature = calculateSignature(encodedHeader, encodedPayload);
-            if (!expectedSignature.equals(signature)) {
+            if (!MessageDigest.isEqual(expectedSignature.getBytes(StandardCharsets.UTF_8),
+                    signature.getBytes(StandardCharsets.UTF_8))) {
                 return false;
             }
 
@@ -116,6 +131,47 @@ public class JwtUtil {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * 验证Token并对照数据库确认它仍然有效。
+     * 仅验签不够：用户被禁用、删除、降权或改密后，已签发的token在过期前会一直可用。
+     */
+    public static boolean validateTokenAndUser(String token) {
+        if (!validateToken(token)) {
+            return false;
+        }
+        try {
+            String decodedPayload = new String(Base64.getUrlDecoder().decode(token.split("\\.")[1]), StandardCharsets.UTF_8);
+            Map<String, Object> payload = JSON.parseObject(decodedPayload, Map.class);
+
+            User user = USER_MAPPER.selectById(Long.parseLong(payload.get("sub").toString()));
+            if (user == null) {
+                return false;
+            }
+            if (user.getStatus() == null || user.getStatus() != USER_STATUS_ACTIVE) {
+                return false;
+            }
+            Object roleId = payload.get("role_id");
+            if (roleId == null || user.getRoleId() == null
+                    || Integer.parseInt(roleId.toString()) != user.getRoleId()) {
+                return false;
+            }
+            Object pv = payload.get("pv");
+            return pv != null && pv.toString().equals(passwordFingerprint(user.getPwd()));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 密码指纹：写入token，改密后指纹变化，旧token随之失效
+     */
+    private static String passwordFingerprint(String pwdHash) throws Exception {
+        Mac hmac = Mac.getInstance(ALGORITHM);
+        hmac.init(new SecretKeySpec(SECRET_KEY.getBytes(StandardCharsets.UTF_8), ALGORITHM));
+        byte[] digest = hmac.doFinal(("pv:" + pwdHash).getBytes(StandardCharsets.UTF_8));
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest).substring(0, 16);
     }
 
     /**

@@ -43,7 +43,16 @@ public class WebSocketInterceptor extends HttpSessionHandshakeInterceptor {
         String socks = serverHttpRequest.getServletRequest().getParameter("socks");
         String installId = serverHttpRequest.getServletRequest().getParameter("installId");
         if (Objects.equals(type, "1")) {
-            System.out.println("type: " + type + " - version: " + version + " - secret: " + secret + " - IP: " + getClientIp(request));
+            // 新版节点把 secret 放在 Header 里（不进 URL、不落访问日志），老版本仍走 query 参数
+            String headerSecret = serverHttpRequest.getServletRequest().getHeader("X-Node-Secret");
+            if (headerSecret != null && !headerSecret.isEmpty()) {
+                secret = headerSecret;
+            }
+            if (secret == null || secret.isEmpty()) {
+                log.info("节点验证失败：未提供secret");
+                return false;
+            }
+            log.info("节点握手 - version: {} - IP: {}", version, getClientIp(request));
             Node node = nodeService.getOne(new QueryWrapper<Node>().eq("secret", secret));
             if (node == null) {
                 log.info("节点验证失败：未找到匹配的secret");
@@ -59,7 +68,7 @@ public class WebSocketInterceptor extends HttpSessionHandshakeInterceptor {
             log.info("节点 {} 通过验证，版本: {}", node.getId(), version);
             // 不在这里更新状态，等到连接建立后再统一更新
         }else {
-            boolean b = JwtUtil.validateToken(secret);
+            boolean b = JwtUtil.validateTokenAndUser(secret);
             if (!b) return false;
             attributes.put("id", JwtUtil.getUserIdFromToken(secret));
         }

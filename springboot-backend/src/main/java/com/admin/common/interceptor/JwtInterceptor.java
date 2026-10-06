@@ -24,7 +24,7 @@ public class JwtInterceptor implements HandlerInterceptor {
         }
 
 
-        if (!JwtUtil.validateToken(token)) {
+        if (!JwtUtil.validateTokenAndUser(token)) {
             throw new UnauthorizedException("无效的token或token已过期");
         }
 

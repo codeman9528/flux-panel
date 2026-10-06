@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
 import java.util.List;
 import java.util.Objects;
 
@@ -230,7 +231,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         boolean result = this.updateById(updateUser);
         
         if (result) {
-            // 5. 处理到期时间延时任务
+            // 5. 用户被禁用或到期时间已过：立即停掉其全部转发，不等定时任务或下一次流量上报
+            User saved = this.getById(userUpdateDto.getId());
+            boolean disabled = saved.getStatus() != null && saved.getStatus() == USER_STATUS_DISABLED;
+            boolean expired = saved.getExpTime() != null && saved.getExpTime() <= System.currentTimeMillis();
+            if (disabled || expired) {
+                pauseAllUserForwards(saved.getId());
+            }
             return R.ok(SUCCESS_UPDATE_MSG);
         } else {
             return R.err(ERROR_UPDATE_FAILED);
@@ -455,6 +462,48 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      */
     private boolean isUserExists(Long userId) {
         return this.getById(userId) != null;
+    }
+
+    /**
+     * 暂停用户全部运行中的转发。数据库状态同步置0，节点侧暂停异步下发，
+     * 避免节点无响应时（每条命令最长等待10秒）卡住管理员的请求。
+     */
+    private void pauseAllUserForwards(Long userId) {
+        List<Forward> forwards = forwardMapper.selectList(new QueryWrapper<Forward>()
+                .eq("user_id", userId).eq("status", 1));
+        if (forwards.isEmpty()) {
+            return;
+        }
+
+        for (Forward forward : forwards) {
+            Forward update = new Forward();
+            update.setId(forward.getId());
+            update.setStatus(0);
+            forwardMapper.updateById(update);
+        }
+
+        CompletableFuture.runAsync(() -> {
+            for (Forward forward : forwards) {
+                try {
+                    Tunnel tunnel = tunnelService.getById(forward.getTunnelId());
+                    if (tunnel == null) {
+                        continue;
+                    }
+                    UserTunnel userTunnel = userTunnelMapper.selectOne(new QueryWrapper<UserTunnel>()
+                            .eq("user_id", forward.getUserId())
+                            .eq("tunnel_id", forward.getTunnelId())
+                            .last("limit 1"));
+                    String serviceName = forward.getId() + "_" + forward.getUserId() + "_"
+                            + (userTunnel != null ? userTunnel.getId() : 0);
+                    GostUtil.PauseService(tunnel.getInNodeId(), serviceName);
+                    if (tunnel.getType() == 2) {
+                        GostUtil.PauseRemoteService(tunnel.getOutNodeId(), serviceName);
+                    }
+                } catch (Exception e) {
+                    log.warn("暂停用户 {} 的转发 {} 失败: {}", userId, forward.getId(), e.getMessage());
+                }
+            }
+        });
     }
 
     /**

@@ -891,6 +891,12 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
 
         // 获取用户信息
         User userInfo = userService.getById(currentUser.getUserId());
+        if (userInfo == null) {
+            return UserPermissionResult.error("用户不存在");
+        }
+        if (userInfo.getStatus() == null || userInfo.getStatus() != 1) {
+            return UserPermissionResult.error("用户已到期或被禁用");
+        }
         if (userInfo.getExpTime() != null && userInfo.getExpTime() <= System.currentTimeMillis()) {
             return UserPermissionResult.error("当前账号已到期");
         }
@@ -915,6 +921,13 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
             return UserPermissionResult.error("用户总流量已用完");
         }
         if (userTunnel.getFlow() <= 0) {
+            return UserPermissionResult.error("该隧道流量已用完");
+        }
+        // 已用流量达到限额时不允许再新建/迁移转发（否则超限用户可反复新建转发继续跑流量）
+        if (userInfo.getFlow() * BYTES_TO_GB <= userInfo.getInFlow() + userInfo.getOutFlow()) {
+            return UserPermissionResult.error("用户总流量已用完");
+        }
+        if (userTunnel.getFlow() * BYTES_TO_GB <= userTunnel.getInFlow() + userTunnel.getOutFlow()) {
             return UserPermissionResult.error("该隧道流量已用完");
         }
 
@@ -1050,6 +1063,8 @@ public class ForwardServiceImpl extends ServiceImpl<ForwardMapper, Forward> impl
     private Forward updateForwardEntity(ForwardUpdateDto forwardUpdateDto, Forward existForward, Tunnel tunnel) {
         Forward forward = new Forward();
         BeanUtils.copyProperties(forwardUpdateDto, forward);
+        // 归属不可由客户端指定：否则普通用户可把转发改到他人名下，让流量记到别人账上
+        forward.setUserId(existForward.getUserId());
 
         // 处理端口分配逻辑
         boolean tunnelChanged = !existForward.getTunnelId().equals(forwardUpdateDto.getTunnelId());

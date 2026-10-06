@@ -221,6 +221,7 @@ JWT_SECRET=$JWT_SECRET
 FRONTEND_PORT=$FRONTEND_PORT
 BACKEND_PORT=$BACKEND_PORT
 EOF
+  chmod 600 .env
 
   echo "🚀 启动 docker 服务..."
   $DOCKER_CMD up -d
