@@ -10,7 +10,8 @@ func saveConfig() {
 
 	file := "gost.json"
 
-	f, err := os.Create(file)
+	// gost.json 含全部转发配置，权限收紧为 0600
+	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return
 	}

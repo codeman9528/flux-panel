@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -144,6 +146,11 @@ func (w *WebSocketReporter) Stop() {
 
 // run 主运行循环
 func (w *WebSocketReporter) run() {
+	// 指数退避：连接失败或刚连上就被断开（面板拒绝接管/secret失效的典型表现）时逐步拉长重试间隔，
+	// 避免被拒后 2-5 秒一轮的无限快速重连空耗 CPU、刷爆双方日志
+	const maxBackoff = 5 * time.Minute
+	backoff := w.reconnectTime
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -156,9 +163,13 @@ func (w *WebSocketReporter) run() {
 
 			if needConnect {
 				if err := w.connect(); err != nil {
-					fmt.Printf("❌ WebSocket连接失败: %v，%v后重试\n", err, w.reconnectTime)
+					fmt.Printf("❌ WebSocket连接失败: %v，%v后重试\n", err, backoff)
 					select {
-					case <-time.After(w.reconnectTime):
+					case <-time.After(backoff):
+						backoff *= 2
+						if backoff > maxBackoff {
+							backoff = maxBackoff
+						}
 						continue
 					case <-w.ctx.Done():
 						return
@@ -168,7 +179,24 @@ func (w *WebSocketReporter) run() {
 
 			// 连接成功，开始发送消息
 			if w.connected {
+				start := time.Now()
 				w.handleConnection()
+				if time.Since(start) >= 30*time.Second {
+					// 连接存活超过30秒视为正常会话，重置退避
+					backoff = w.reconnectTime
+				} else {
+					// 刚连上就被断开：大概率是面板主动拒绝（install_id 接管/secret 失效），退避等待
+					fmt.Printf("⚠️ 连接建立后很快被断开（可能被面板拒绝接管），%v后重试\n", backoff)
+					select {
+					case <-time.After(backoff):
+					case <-w.ctx.Done():
+						return
+					}
+					backoff *= 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+					}
+				}
 			} else {
 				// 如果连接失败，等待重试
 				select {
@@ -209,11 +237,15 @@ func (w *WebSocketReporter) connect() error {
 
 	var cfg LocalConfig
 	if b, err := os.ReadFile("config.json"); err == nil {
-		json.Unmarshal(b, &cfg)
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			fmt.Printf("⚠️ 解析config.json失败（http/tls/socks将按0处理）: %v\n", err)
+		}
+	} else {
+		fmt.Printf("⚠️ 读取config.json失败（http/tls/socks将按0处理）: %v\n", err)
 	}
 
-	// 使用最新的配置重新构建 URL
-	currentURL := "ws://" + w.addr + "/system-info?type=1&secret=" + w.secret + "&version=" + w.version +
+	// 使用最新的配置重新构建 URL（secret 放 Header 传输，不进 URL，避免落入各级访问日志）
+	currentURL := "ws://" + w.addr + "/system-info?type=1&version=" + w.version +
 		"&http=" + strconv.Itoa(cfg.Http) + "&tls=" + strconv.Itoa(cfg.Tls) + "&socks=" + strconv.Itoa(cfg.Socks) +
 		"&installId=" + strconv.FormatInt(readInstallId(), 10)
 
@@ -222,10 +254,14 @@ func (w *WebSocketReporter) connect() error {
 		return fmt.Errorf("解析URL失败: %v", err)
 	}
 
-	dialer := websocket.DefaultDialer
+	// 拷贝默认Dialer再改超时，避免修改全局共享对象引发数据竞争
+	dialer := *websocket.DefaultDialer
 	dialer.HandshakeTimeout = 10 * time.Second
 
-	conn, _, err := dialer.Dial(u.String(), nil)
+	header := http.Header{}
+	header.Set("X-Node-Secret", w.secret)
+
+	conn, _, err := dialer.Dial(u.String(), header)
 	if err != nil {
 		return fmt.Errorf("连接WebSocket失败: %v", err)
 	}
@@ -325,29 +361,22 @@ func (w *WebSocketReporter) sendSystemInfo(sysInfo SystemInfo) error {
 		return fmt.Errorf("序列化系统信息失败: %v", err)
 	}
 
-	var messageData []byte
-
-	// 如果有加密器，则加密数据
-	if w.aesCrypto != nil {
-		encryptedData, err := w.aesCrypto.Encrypt(jsonData)
-		if err != nil {
-			fmt.Printf("⚠️ 加密失败，发送原始数据: %v\n", err)
-			messageData = jsonData
-		} else {
-			// 创建加密消息包装器
-			encryptedMessage := map[string]interface{}{
-				"encrypted": true,
-				"data":      encryptedData,
-				"timestamp": time.Now().Unix(),
-			}
-			messageData, err = json.Marshal(encryptedMessage)
-			if err != nil {
-				fmt.Printf("⚠️ 序列化加密消息失败，发送原始数据: %v\n", err)
-				messageData = jsonData
-			}
-		}
-	} else {
-		messageData = jsonData
+	// 强制加密，失败不降级发明文（链路是明文ws，明文降级等于加密形同虚设）
+	if w.aesCrypto == nil {
+		return fmt.Errorf("加密器不可用，拒绝明文发送")
+	}
+	encryptedData, err := w.aesCrypto.Encrypt(jsonData)
+	if err != nil {
+		return fmt.Errorf("加密系统信息失败: %v", err)
+	}
+	encryptedMessage := map[string]interface{}{
+		"encrypted": true,
+		"data":      encryptedData,
+		"timestamp": time.Now().Unix(),
+	}
+	messageData, err := json.Marshal(encryptedMessage)
+	if err != nil {
+		return fmt.Errorf("序列化加密消息失败: %v", err)
 	}
 
 	// 设置写入超时
@@ -408,23 +437,28 @@ func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byt
 			Timestamp int64  `json:"timestamp"`
 		}
 
-		// 尝试解析为加密消息格式
-		if err := json.Unmarshal(message, &encryptedWrapper); err == nil && encryptedWrapper.Encrypted {
-			if w.aesCrypto != nil {
-				// 解密数据
-				decryptedData, err := w.aesCrypto.Decrypt(encryptedWrapper.Data)
-				if err != nil {
-					fmt.Printf("❌ 解密失败: %v\n", err)
-					w.sendErrorResponse("DecryptError", fmt.Sprintf("解密失败: %v", err))
-					return
-				}
-				message = decryptedData
-			} else {
-				fmt.Printf("❌ 收到加密消息但没有加密器\n")
-				w.sendErrorResponse("NoDecryptor", "没有可用的解密器")
-				return
-			}
+		// 强制要求加密：链路是明文 ws，若接受未加密命令，任何链路中间人都能注入命令
+		//（AddService 的 preUp/postUp 直达 /bin/sh，等于远程任意命令执行），因此明文一律拒收
+		if err := json.Unmarshal(message, &encryptedWrapper); err != nil || !encryptedWrapper.Encrypted {
+			fmt.Printf("❌ 收到未加密消息，已拒绝（仅接受AES加密命令）\n")
+			w.sendErrorResponse("PlaintextRejected", "节点仅接受加密消息")
+			return
 		}
+
+		if w.aesCrypto == nil {
+			fmt.Printf("❌ 收到加密消息但没有加密器\n")
+			w.sendErrorResponse("NoDecryptor", "没有可用的解密器")
+			return
+		}
+
+		// 解密数据
+		decryptedData, err := w.aesCrypto.Decrypt(encryptedWrapper.Data)
+		if err != nil {
+			fmt.Printf("❌ 解密失败: %v\n", err)
+			w.sendErrorResponse("DecryptError", fmt.Sprintf("解密失败: %v", err))
+			return
+		}
+		message = decryptedData
 		// 先尝试解析是否是压缩消息
 		var compressedMsg struct {
 			Type       string          `json:"type"`
@@ -446,10 +480,17 @@ func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byt
 			}
 			defer gzipReader.Close()
 
+			// 限制解压后大小，防止gzip炸弹打爆内存
+			const maxDecompressedSize = 64 << 20 // 64MB
 			var decompressedData bytes.Buffer
-			if _, err := decompressedData.ReadFrom(gzipReader); err != nil {
+			if _, err := decompressedData.ReadFrom(io.LimitReader(gzipReader, maxDecompressedSize+1)); err != nil {
 				fmt.Printf("❌ 解压数据失败: %v\n", err)
 				w.sendErrorResponse("DecompressError", fmt.Sprintf("解压失败: %v", err))
+				return
+			}
+			if decompressedData.Len() > maxDecompressedSize {
+				fmt.Printf("❌ 解压后数据超过64MB，已拒绝\n")
+				w.sendErrorResponse("DecompressError", "解压后数据过大")
 				return
 			}
 
@@ -489,6 +530,19 @@ func (w *WebSocketReporter) handleReceivedMessage(messageType int, message []byt
 
 // routeCommand 路由命令到对应的处理函数
 func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
+	// 任一异常配置触发panic只应报错，不应让整个gost进程崩溃（否则本节点全部隧道同时断线）
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("❌ 处理命令 %s 时发生panic: %v\n", cmd.Type, r)
+			w.sendResponse(CommandResponse{
+				Type:      cmd.Type + "Response",
+				Success:   false,
+				Message:   fmt.Sprintf("节点处理命令时发生内部错误: %v", r),
+				RequestId: cmd.RequestId,
+			})
+		}
+	}()
+
 	jsonBytes, errs := json.Marshal(cmd)
 	if errs != nil {
 		fmt.Println("Error marshaling JSON:", errs)
@@ -573,6 +627,25 @@ func (w *WebSocketReporter) routeCommand(cmd CommandMessage) {
 	w.sendResponse(response)
 }
 
+// sanitizeServiceConfigs 剥离面板下发配置中的命令执行钩子。
+// preUp/preDown/postUp/postDown 会被 service 以 /bin/sh -c 执行，面板的正常业务从不使用它们；
+// 在节点侧强制剥离，即使面板被攻破也无法借下发配置在节点上执行任意命令（纵深防御）。
+func sanitizeServiceConfigs(services []config.ServiceConfig) {
+	for i := range services {
+		md := services[i].Metadata
+		if md == nil {
+			continue
+		}
+		for k := range md {
+			switch strings.ToLower(k) {
+			case "preup", "predown", "postup", "postdown":
+				fmt.Printf("⚠️ 已剥离服务 %s 配置中的命令钩子字段: %s\n", services[i].Name, k)
+				delete(md, k)
+			}
+		}
+	}
+}
+
 // Service 命令处理函数
 func (w *WebSocketReporter) handleAddService(data interface{}) error {
 	// 将 interface{} 转换为 JSON 再解析为具体类型
@@ -591,6 +664,7 @@ func (w *WebSocketReporter) handleAddService(data interface{}) error {
 	if err := json.Unmarshal(processedData, &services); err != nil {
 		return fmt.Errorf("解析服务配置失败: %v", err)
 	}
+	sanitizeServiceConfigs(services)
 
 	req := createServicesRequest{Data: services}
 	return createServices(req)
@@ -612,6 +686,7 @@ func (w *WebSocketReporter) handleUpdateService(data interface{}) error {
 	if err := json.Unmarshal(processedData, &services); err != nil {
 		return fmt.Errorf("解析服务配置失败: %v", err)
 	}
+	sanitizeServiceConfigs(services)
 
 	req := updateServicesRequest{Data: services}
 	return updateServices(req)
@@ -848,30 +923,24 @@ func (w *WebSocketReporter) handleSetProtocol(data interface{}) error {
 func updateLocalConfigJSON(httpVal int, tlsVal int, socksVal int) error {
 	path := "config.json"
 
-	// 读取现有配置
-	type LocalConfig struct {
-		Addr   string `json:"addr"`
-		Secret string `json:"secret"`
-		Http   int    `json:"http"`
-		Tls    int    `json:"tls"`
-		Socks  int    `json:"socks"`
-	}
-
-	var cfg LocalConfig
+	// 用 map 做读-改-写，保留将来新增的未知字段不被吃掉
+	cfg := map[string]interface{}{}
 	if b, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(b, &cfg)
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			fmt.Printf("⚠️ 解析config.json失败，将重建: %v\n", err)
+		}
 	}
 
-	cfg.Http = httpVal
-	cfg.Tls = tlsVal
-	cfg.Socks = socksVal
+	cfg["http"] = httpVal
+	cfg["tls"] = tlsVal
+	cfg["socks"] = socksVal
 
-	// 写回
+	// 写回（config.json 含 secret，权限收紧为 0600）
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 // handleCall 处理服务端的call回调消息
@@ -927,29 +996,25 @@ func (w *WebSocketReporter) sendResponse(response CommandResponse) {
 		return
 	}
 
-	var messageData []byte
-
-	// 如果有加密器，则加密数据
-	if w.aesCrypto != nil {
-		encryptedData, err := w.aesCrypto.Encrypt(jsonData)
-		if err != nil {
-			fmt.Printf("⚠️ 加密响应失败，发送原始数据: %v\n", err)
-			messageData = jsonData
-		} else {
-			// 创建加密消息包装器
-			encryptedMessage := map[string]interface{}{
-				"encrypted": true,
-				"data":      encryptedData,
-				"timestamp": time.Now().Unix(),
-			}
-			messageData, err = json.Marshal(encryptedMessage)
-			if err != nil {
-				fmt.Printf("⚠️ 序列化加密响应失败，发送原始数据: %v\n", err)
-				messageData = jsonData
-			}
-		}
-	} else {
-		messageData = jsonData
+	// 强制加密，失败不降级发明文
+	if w.aesCrypto == nil {
+		fmt.Printf("❌ 加密器不可用，响应未发送\n")
+		return
+	}
+	encryptedData, err := w.aesCrypto.Encrypt(jsonData)
+	if err != nil {
+		fmt.Printf("❌ 加密响应失败，响应未发送: %v\n", err)
+		return
+	}
+	encryptedMessage := map[string]interface{}{
+		"encrypted": true,
+		"data":      encryptedData,
+		"timestamp": time.Now().Unix(),
+	}
+	messageData, err := json.Marshal(encryptedMessage)
+	if err != nil {
+		fmt.Printf("❌ 序列化加密响应失败，响应未发送: %v\n", err)
+		return
 	}
 
 	// 检查消息大小，如果超过10MB则记录警告
@@ -1056,10 +1121,10 @@ func readInstallId() int64 {
 // StartWebSocketReporterWithConfig 使用配置字段启动WebSocket报告器
 func StartWebSocketReporterWithConfig(addr string, secret string, http int, tls int, socks int, version string) *WebSocketReporter {
 
-	// 构建初始 WebSocket URL
-	fullURL := "ws://" + addr + "/system-info?type=1&secret=" + secret + "&version=" + version + "&http=" + strconv.Itoa(http) + "&tls=" + strconv.Itoa(tls) + "&socks=" + strconv.Itoa(socks) + "&installId=" + strconv.FormatInt(readInstallId(), 10)
+	// 构建初始 WebSocket URL（secret 不进URL，连接时通过Header传输）
+	fullURL := "ws://" + addr + "/system-info?type=1&version=" + version + "&http=" + strconv.Itoa(http) + "&tls=" + strconv.Itoa(tls) + "&socks=" + strconv.Itoa(socks) + "&installId=" + strconv.FormatInt(readInstallId(), 10)
 
-	fmt.Printf("🔗 WebSocket连接URL: %s\n", fullURL)
+	fmt.Printf("🔗 WebSocket连接地址: ws://%s/system-info\n", addr)
 
 	reporter := NewWebSocketReporter(fullURL, secret)
 	// 保存 addr, secret, version 供重连时使用
@@ -1104,12 +1169,18 @@ func (w *WebSocketReporter) handleTcpPing(data interface{}) (TcpPingResponse, er
 		}, nil
 	}
 
-	// 设置默认值
+	// 设置默认值并限制上限，防止超大Count/Timeout长时间占用节点资源
 	if req.Count <= 0 {
 		req.Count = 4
 	}
+	if req.Count > 20 {
+		req.Count = 20
+	}
 	if req.Timeout <= 0 {
 		req.Timeout = 5000 // 默认5秒超时
+	}
+	if req.Timeout > 10000 {
+		req.Timeout = 10000
 	}
 
 	// 执行TCP ping操作

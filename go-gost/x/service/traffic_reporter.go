@@ -17,6 +17,7 @@ import (
 
 var httpReportURL string
 var configReportURL string
+var reportSecret string             // 节点密钥（通过Header传输，不进URL）
 var httpAESCrypto *crypto.AESCrypto // 新增：HTTP上报加密器
 
 // TrafficReportItem 流量报告项（压缩格式）
@@ -27,8 +28,10 @@ type TrafficReportItem struct {
 }
 
 func SetHTTPReportURL(addr string, secret string) {
-	httpReportURL = "http://" + addr + "/flow/upload?secret=" + secret
-	configReportURL = "http://" + addr + "/flow/config?secret=" + secret
+	// secret 改放 Header 传输，不拼进 URL（URL 会落入面板侧反代/访问日志）
+	httpReportURL = "http://" + addr + "/flow/upload"
+	configReportURL = "http://" + addr + "/flow/config"
+	reportSecret = secret
 
 	// 创建 AES 加密器
 	var err error
@@ -48,29 +51,22 @@ func sendTrafficReport(ctx context.Context, reportItems TrafficReportItem) (bool
 		return false, fmt.Errorf("序列化报告数据失败: %v", err)
 	}
 
-	var requestBody []byte
-
-	// 如果有加密器，则加密数据
-	if httpAESCrypto != nil {
-		encryptedData, err := httpAESCrypto.Encrypt(jsonData)
-		if err != nil {
-			fmt.Printf("⚠️ 加密流量报告失败，发送原始数据: %v\n", err)
-			requestBody = jsonData
-		} else {
-			// 创建加密消息包装器
-			encryptedMessage := map[string]interface{}{
-				"encrypted": true,
-				"data":      encryptedData,
-				"timestamp": time.Now().Unix(),
-			}
-			requestBody, err = json.Marshal(encryptedMessage)
-			if err != nil {
-				fmt.Printf("⚠️ 序列化加密流量报告失败，发送原始数据: %v\n", err)
-				requestBody = jsonData
-			}
-		}
-	} else {
-		requestBody = jsonData
+	// 强制加密，失败不降级发明文（流量数据决定计费，明文可被篡改）
+	if httpAESCrypto == nil {
+		return false, fmt.Errorf("加密器不可用，拒绝明文上报")
+	}
+	encryptedData, err := httpAESCrypto.Encrypt(jsonData)
+	if err != nil {
+		return false, fmt.Errorf("加密流量报告失败: %v", err)
+	}
+	encryptedMessage := map[string]interface{}{
+		"encrypted": true,
+		"data":      encryptedData,
+		"timestamp": time.Now().Unix(),
+	}
+	requestBody, err := json.Marshal(encryptedMessage)
+	if err != nil {
+		return false, fmt.Errorf("序列化加密流量报告失败: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", httpReportURL, bytes.NewBuffer(requestBody))
@@ -80,6 +76,7 @@ func sendTrafficReport(ctx context.Context, reportItems TrafficReportItem) (bool
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "GOST-Traffic-Reporter/1.0")
+	req.Header.Set("X-Node-Secret", reportSecret)
 
 	client := &http.Client{
 		Timeout: 5 * time.Second,
@@ -124,29 +121,22 @@ func sendConfigReport(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("获取配置数据失败: %v", err)
 	}
 
-	var requestBody []byte
-
-	// 如果有加密器，则加密数据
-	if httpAESCrypto != nil {
-		encryptedData, err := httpAESCrypto.Encrypt(configData)
-		if err != nil {
-			fmt.Printf("⚠️ 加密配置报告失败，发送原始数据: %v\n", err)
-			requestBody = configData
-		} else {
-			// 创建加密消息包装器
-			encryptedMessage := map[string]interface{}{
-				"encrypted": true,
-				"data":      encryptedData,
-				"timestamp": time.Now().Unix(),
-			}
-			requestBody, err = json.Marshal(encryptedMessage)
-			if err != nil {
-				fmt.Printf("⚠️ 序列化加密配置报告失败，发送原始数据: %v\n", err)
-				requestBody = configData
-			}
-		}
-	} else {
-		requestBody = configData
+	// 强制加密，失败不降级发明文（配置含全部转发信息）
+	if httpAESCrypto == nil {
+		return false, fmt.Errorf("加密器不可用，拒绝明文上报")
+	}
+	encryptedData, err := httpAESCrypto.Encrypt(configData)
+	if err != nil {
+		return false, fmt.Errorf("加密配置报告失败: %v", err)
+	}
+	encryptedMessage := map[string]interface{}{
+		"encrypted": true,
+		"data":      encryptedData,
+		"timestamp": time.Now().Unix(),
+	}
+	requestBody, err := json.Marshal(encryptedMessage)
+	if err != nil {
+		return false, fmt.Errorf("序列化加密配置报告失败: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", configReportURL, bytes.NewBuffer(requestBody))
@@ -156,6 +146,7 @@ func sendConfigReport(ctx context.Context) (bool, error) {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Config-Reporter/1.0")
+	req.Header.Set("X-Node-Secret", reportSecret)
 
 	client := &http.Client{
 		Timeout: 10 * time.Second, // 配置上报可以稍长一些

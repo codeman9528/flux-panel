@@ -414,7 +414,8 @@ func (s *defaultService) observeStats(ctx context.Context) {
 						fmt.Printf("发送流量报告失败: %v", err)
 					} else if success {
 						if xstats, ok := st.(*xstats.Stats); ok {
-							xstats.ResetTraffic(st.Get(stats.KindInputBytes)-inputBytes, st.Get(stats.KindOutputBytes)-outputBytes)
+							// 原子扣除已上报的快照值，上报期间新增的流量保留到下个周期
+							xstats.ResetTraffic(inputBytes, outputBytes)
 						}
 					}
 				}

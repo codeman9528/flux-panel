@@ -66,9 +66,16 @@ func (s *Stats) Get(kind stats.Kind) uint64 {
 	return 0
 }
 
+// ResetTraffic 从计数器中原子扣除"已成功上报"的字节数。
+// 必须用原子减法而不是 Store 覆盖：上报期间（最长5s）并发 Add 进来的字节
+// 若被 Store 覆盖会永久丢失，高流量下每个上报周期都在少计费。
 func (s *Stats) ResetTraffic(reportedInputBytes, reportedOutputBytes uint64) {
-	s.inputBytes.Store(reportedInputBytes)
-	s.outputBytes.Store(reportedOutputBytes)
+	if reportedInputBytes > 0 {
+		s.inputBytes.Add(^(reportedInputBytes - 1)) // 等价于原子减 reportedInputBytes
+	}
+	if reportedOutputBytes > 0 {
+		s.outputBytes.Add(^(reportedOutputBytes - 1))
+	}
 }
 
 func (s *Stats) Reset() {
